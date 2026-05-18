@@ -24,10 +24,10 @@ class Moderation(StatesGroup):
     waiting_reason = State()
 
 TYPE_LABELS = {
-    "type_sale": "продажа",
-    "type_swap": "обмен",
-    "type_gift": "даром",
-    "type_search": "ищу",
+    "type_sale": "ПРОДАЖА",
+    "type_swap": "ОБМЕН",
+    "type_gift": "ОТДАМ ДАРОМ",
+    "type_search": "ИЩУ КНИГУ",
 }
 
 async def form_listing_card(state: FSMContext):
@@ -40,7 +40,7 @@ async def form_listing_card(state: FSMContext):
     comment = user_data.get('comment')
     photo = user_data.get('photo_id')
     
-    caption.append(f"Тип объявления: {listing_type}")
+    caption.append(f"{listing_type}\n")
     if price is not None:
         caption.append(f"Цена: {price}")
     if district is not None:
@@ -170,7 +170,7 @@ async def got_listing_type(callback: CallbackQuery, state: FSMContext):
     label = TYPE_LABELS[callback.data]
     await state.update_data(listing_type=label)
     await state.set_state(Listing.waiting_photo)
-    if label == "ищу":
+    if label == TYPE_LABELS["type_search"]:
         await callback.message.answer(
             f"Вы выбрали тип объявления: {label}.\n\n"
             "Если у вас есть обложка искомой книги - пришлите фото, если нет - /skip."
@@ -190,11 +190,11 @@ async def got_listing_type_hint(message: Message, state: FSMContext):
 async def skip_photo(message: Message, state: FSMContext):
     user_data = await state.get_data()
     listing_type = user_data.get('listing_type')
-    if listing_type == "ищу":
+    if listing_type == TYPE_LABELS["type_search"]:
         await message.answer("Хорошо, пропускаем фото. \n\n" 
                              "В каком районе удобно встретиться? Можете написать /skip, чтобы пропустить.")
         await state.set_state(Listing.waiting_district)
-    elif listing_type in ("продажа", "обмен", "даром"):
+    elif listing_type in (TYPE_LABELS["type_sale"], TYPE_LABELS["type_swap"], TYPE_LABELS["type_gift"]):
         await message.answer("Фото обязательно для этого типа объявления. Пожалуйста, пришлите фото книги.")
 
 #Этап получения фото
@@ -204,17 +204,17 @@ async def got_photo(message: Message, state: FSMContext):
     await state.update_data(photo_id=photo_id)
     user_data = await state.get_data()
     listing_type = user_data.get('listing_type')
-    if listing_type == "продажа":
+    if listing_type == TYPE_LABELS["type_sale"]:
         await state.set_state(Listing.waiting_price)
         await message.answer(
             "Фото принято. \n\n"
             "Укажите цену в тенге. Если книг несколько - можете указать диапазон цен (например, 500–1500) или минимальную цену."
         )
-    elif listing_type == "ищу":
+    elif listing_type == TYPE_LABELS["type_search"]:
         await state.set_state(Listing.waiting_district)
         await message.answer("Фото принято. \n\n"
                              "В каком районе удобно встретиться? Можете написать /skip, чтобы пропустить.")
-    elif listing_type in ("даром", "обмен"): 
+    elif listing_type in (TYPE_LABELS["type_gift"], TYPE_LABELS["type_swap"]): 
         await state.set_state(Listing.waiting_district)
         await message.answer("Фото принято. \n\n"
                              "Из какого района можно забрать книгу?")
@@ -242,11 +242,11 @@ async def got_price(message: Message, state: FSMContext):
 async def skip_district(message: Message, state: FSMContext):
     user_data = await state.get_data()
     listing_type = user_data.get('listing_type')
-    if listing_type == "ищу":
+    if listing_type == TYPE_LABELS["type_search"]:
         await message.answer("Хорошо, район не указан.\n\n"
                             "Укажите номер телефона или ваш телеграм @username для связи.")
         await state.set_state(Listing.waiting_contact)
-    elif listing_type in ("продажа", "обмен", "даром"):
+    elif listing_type in (TYPE_LABELS["type_sale"], TYPE_LABELS["type_swap"], TYPE_LABELS["type_gift"]):
         await message.answer("Район нужен — без него непонятно, откуда забрать книгу. Пожалуйста, укажите.")
 
 #Этап предоставления района
@@ -271,7 +271,7 @@ async def got_contact(message: Message, state: FSMContext):
     user_data = await state.get_data()
     listing_type = user_data.get('listing_type')
 
-    if listing_type == "ищу": 
+    if listing_type == TYPE_LABELS["type_search"]:
         await message.answer("Контакт записан. \n\n"
                              "Опишите книгу, которую ищете: автор, название, тематика. Это обязательное поле для объявлений типа «Ищу».")
     else: 
@@ -284,7 +284,7 @@ async def skip_comment(message: Message, state: FSMContext):
     user_data = await state.get_data()
     listing_type = user_data.get('listing_type')
 
-    if listing_type == "ищу":
+    if listing_type == TYPE_LABELS["type_search"]:
         await message.answer("Описание книги обязательно для типа «Ищу». Пожалуйста, опишите.")
     else:
         await send_listing_to_user(message, state)

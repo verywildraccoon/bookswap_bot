@@ -50,7 +50,7 @@ async def approve_admin_request(callback: CallbackQuery):
     data['admins'] = config.ADMINS
     save_config(data)
 
-    await callback.message.answer(f"✅ {full_name} назначен администратором")
+    await callback.message.answer(f"✅ {full_name} назначен(а) администратором")
     await bot.send_message(chat_id=new_admin_id, text="Ваша заявка одобрена. \n\n" 
     "Теперь вы администратор группы. Вы можете удалять или добавлять новых модераторов.")
 
@@ -238,7 +238,7 @@ async def approve_moderator_request(callback: CallbackQuery):
     data['moderators'] = config.MODERATORS
     save_config(data)
 
-    await callback.message.answer(f"✅ {full_name} назначен модератором")
+    await callback.message.answer(f"✅ {full_name} назначен(а) модератором")
     await bot.send_message(chat_id=new_moderator_id, text="Ваша заявка одобрена. \n\n" 
     "Теперь вы модератор объявлений. Вы будете получать новые объявления для проверки и сможете одобрять или отклонять их.")
 

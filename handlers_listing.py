@@ -140,6 +140,7 @@ async def handle_help(message: Message):
         "/new — создать новое объявление\n"
         "/cancel — отменить создание объявления\n"
         "/skip — пропустить необязательный шаг при создании объявления\n"
+        "/next — продолжить после загрузки фото\n"
         "/help — показать эту справку\n\n"  
 
         "Команды для модераторов и администраторов:\n"  
@@ -190,12 +191,14 @@ async def got_listing_type(callback: CallbackQuery, state: FSMContext):
     if label == TYPE_LABELS["type_search"]:
         await callback.message.answer(
             f"Вы выбрали тип объявления: {label}.\n\n"
-            "Если у вас есть обложка искомой книги - пришлите фото, если нет - /skip."
+            "Если у вас есть обложка искомой книги - пришлите фото. Можно несколько - отправляйте по очереди или одним альбомом. \n\n"
+            "Когда закончите - напишите /next. Если фото нет - сразу пишите /skip."
             )
     else:
         await callback.message.answer(
             f"Вы выбрали тип объявления: {label}.\n\n"
-            "Пришлите фото книги.")
+            "Пришлите фото книги. Можно несколько - отправляйте по очереди или одним альбомом. \n\n"
+            "Когда закончите - напишите /next, чтобы продолжить.")
 
 #Не нажали на кнопку, а прислали текст или прислали текстовую команду
 @router.message(Listing.waiting_listing_type, F.chat.type == "private")   
@@ -224,9 +227,8 @@ async def got_photo(message: Message, state: FSMContext):
     photo_ids.append(new_photo_id)
     await state.update_data(photo_ids=photo_ids)
 
-    await message.answer(
-        "Можете прислать ещё фото или /next, чтобы продолжить."
-    )
+    if len(photo_ids) == 1:
+        await message.answer("Фото получено. Если хотите добавить ещё фото - отправляйте, или /next, чтобы продолжить.")    
 
 @router.message(Listing.waiting_photo, Command("next"), F.chat.type == "private")
 async def next_after_photo(message: Message, state: FSMContext):
@@ -237,6 +239,8 @@ async def next_after_photo(message: Message, state: FSMContext):
     if not photo_ids and listing_type != TYPE_LABELS["type_search"]:
         await message.answer("Вы не прислали ни одного фото. Пожалуйста, пришлите фото книги.")
         return
+    
+    await message.answer(f"Принято фото: {len(photo_ids)}.")
 
     if listing_type == TYPE_LABELS["type_sale"]:
         await state.set_state(Listing.waiting_price)

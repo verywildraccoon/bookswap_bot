@@ -3,6 +3,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.utils.media_group import MediaGroupBuilder
 import keyboards
 import uuid
 
@@ -38,7 +39,7 @@ async def form_listing_card(state: FSMContext):
     district = user_data.get('district')
     contact = user_data.get('contact')
     comment = user_data.get('comment')
-    photo = user_data.get('photo_id')
+    photos = user_data.get('photo_ids')
     
     caption.append(f"{listing_type}\n")
     if price is not None:
@@ -51,22 +52,22 @@ async def form_listing_card(state: FSMContext):
 
     caption = ("\n".join(caption))
     
-    return caption, photo
+    return caption, photos
 
 async def send_listing_to_user(message: Message, state: FSMContext):
-    caption, photo = await form_listing_card(state)
-    if photo is not None:
-        await message.answer_photo(photo=photo, caption = caption)
-    else:
+    caption, photos = await form_listing_card(state)
+    if photos is None:
         await message.answer(caption)
-
-async def ask_publish_confirmation(message: Message, state: FSMContext):
-    await state.set_state(Listing.waiting_confirmation)
-    keyboard = keyboards.get_listing_confirmation_keyboard()
-    await message.answer("Опубликовать объявление?", reply_markup=keyboard)
+    elif len(photos) == 1:
+        await message.answer_photo(photo=photos[0], caption = caption)
+    else:
+        album_builder = MediaGroupBuilder(caption=caption)
+        for photo_id in photos:
+            album_builder.add_photo(media=photo_id)
+        await message.answer_media_group(media=album_builder.build())
 
 async def send_listing_to_group(callback: CallbackQuery, state: FSMContext):
-    caption, photo = await form_listing_card(state)
+    caption, photos = await form_listing_card(state)
     username = callback.from_user.username
     full_name = callback.from_user.full_name
 
@@ -74,14 +75,19 @@ async def send_listing_to_group(callback: CallbackQuery, state: FSMContext):
         group_caption = caption + "\n\n" + "Автор объявления: @" + username
     else:
         group_caption = caption + "\n\n" + "Автор объявления: " + full_name
-    
-    if photo is not None:
-        await bot.send_photo(chat_id=config.GROUP_ID, photo=photo, caption=group_caption)
-    else:
+
+    if photos is None:
         await bot.send_message(chat_id=config.GROUP_ID, text=group_caption)
+    elif len(photos) == 1:
+        await bot.send_photo(chat_id=config.GROUP_ID, photo=photos[0], caption=group_caption)
+    else:
+        album_builder = MediaGroupBuilder(caption=group_caption)
+        for photo_id in photos:
+            album_builder.add_photo(media=photo_id)
+        await bot.send_media_group(chat_id=config.GROUP_ID, media=album_builder.build())
 
 async def send_listing_to_moderator(callback: CallbackQuery, state: FSMContext):
-    caption, photo = await form_listing_card(state)
+    caption, photos = await form_listing_card(state)
     username = callback.from_user.username
     full_name = callback.from_user.full_name
     user_id = callback.from_user.id
@@ -92,7 +98,7 @@ async def send_listing_to_moderator(callback: CallbackQuery, state: FSMContext):
     config.pending_listings[unique_id] = {
         "author": {"user_id": user_id, "username" : username, "full_name":full_name},
         "caption" : caption,
-        "photo" : photo
+        "photos" : photos
         }
 
     if username is not None: 
@@ -101,10 +107,21 @@ async def send_listing_to_moderator(callback: CallbackQuery, state: FSMContext):
         mod_caption = "⏳ Новое объявление на модерации:\n\n" + caption + "\n\n" + "Автор объявления: " + full_name
     
     for moderator_id in config.MODERATORS:
-        if photo is not None:
-            await bot.send_photo(chat_id=moderator_id, photo=photo, caption=mod_caption, reply_markup=keyboard)
-        else:
+        if photos is None:
             await bot.send_message(chat_id=moderator_id, text=mod_caption, reply_markup=keyboard)
+        elif len(photos) == 1:
+            await bot.send_photo(chat_id=moderator_id, photo=photos[0], caption=mod_caption, reply_markup=keyboard)
+        else:
+            album_builder = MediaGroupBuilder(caption=mod_caption)
+            for photo_id in photos:
+                album_builder.add_photo(media=photo_id)
+            await bot.send_media_group(chat_id=moderator_id, media=album_builder.build())
+            await bot.send_message(chat_id=moderator_id, text="Примите решение по объявлению", reply_markup=keyboard)
+
+async def ask_publish_confirmation(message: Message, state: FSMContext):
+    await state.set_state(Listing.waiting_confirmation)
+    keyboard = keyboards.get_listing_confirmation_keyboard()
+    await message.answer("Опубликовать объявление?", reply_markup=keyboard)
 
 @router.message(CommandStart())
 async def handle_start(message: Message):
@@ -198,26 +215,40 @@ async def skip_photo(message: Message, state: FSMContext):
         await message.answer("Фото обязательно для этого типа объявления. Пожалуйста, пришлите фото книги.")
 
 #Этап получения фото
+
 @router.message(Listing.waiting_photo, F.photo, F.chat.type == "private")
 async def got_photo(message: Message, state: FSMContext):
-    photo_id = message.photo[-1].file_id
-    await state.update_data(photo_id=photo_id)
+    user_data = await state.get_data()
+    photo_ids = user_data.get('photo_ids', [])
+    new_photo_id = message.photo[-1].file_id
+    photo_ids.append(new_photo_id)
+    await state.update_data(photo_ids=photo_ids)
+
+    await message.answer(
+        "Можете прислать ещё фото или /next, чтобы продолжить."
+    )
+
+@router.message(Listing.waiting_photo, Command("next"), F.chat.type == "private")
+async def next_after_photo(message: Message, state: FSMContext):
     user_data = await state.get_data()
     listing_type = user_data.get('listing_type')
+    photo_ids = user_data.get('photo_ids', [])
+
+    if not photo_ids and listing_type != TYPE_LABELS["type_search"]:
+        await message.answer("Вы не прислали ни одного фото. Пожалуйста, пришлите фото книги.")
+        return
+
     if listing_type == TYPE_LABELS["type_sale"]:
         await state.set_state(Listing.waiting_price)
         await message.answer(
-            "Фото принято. \n\n"
             "Укажите цену в тенге. Если книг несколько - можете указать диапазон цен (например, 500–1500) или минимальную цену."
         )
     elif listing_type == TYPE_LABELS["type_search"]:
         await state.set_state(Listing.waiting_district)
-        await message.answer("Фото принято. \n\n"
-                             "В каком районе удобно встретиться? Можете написать /skip, чтобы пропустить.")
+        await message.answer("В каком районе удобно встретиться? Можете написать /skip, чтобы пропустить.")
     elif listing_type in (TYPE_LABELS["type_gift"], TYPE_LABELS["type_swap"]): 
         await state.set_state(Listing.waiting_district)
-        await message.answer("Фото принято. \n\n"
-                             "Из какого района можно забрать книгу?")
+        await message.answer("Из какого района можно забрать книгу?")
 
 #Не прислали фото, ошибка
 @router.message(Listing.waiting_photo, F.chat.type == "private")
@@ -346,7 +377,7 @@ async def approve_listing(callback: CallbackQuery):
     username = listing["author"]["username"]
     full_name = listing["author"]["full_name"]
     caption = listing["caption"]
-    photo = listing["photo"]
+    photos = listing["photos"]
         
     if username is not None: 
          group_caption = caption + "\n\n" + "Автор объявления: @" + username
@@ -356,10 +387,15 @@ async def approve_listing(callback: CallbackQuery):
     await bot.send_message(chat_id=user_id, text=f"✅ Ваше объявление одобрено и опубликовано в группе.")
     await callback.message.answer(f"✅ Объявление от {full_name} опубликовано.")
 
-    if photo is not None:
-        await bot.send_photo(chat_id=config.GROUP_ID, photo=photo, caption=group_caption)
-    else: 
+    if photos is None:
         await bot.send_message(chat_id=config.GROUP_ID, text=group_caption)
+    elif len(photos) == 1:
+        await bot.send_photo(chat_id=config.GROUP_ID, photo=photos[0], caption=group_caption)
+    else:
+        album_builder = MediaGroupBuilder(caption=group_caption)
+        for photo_id in photos:
+            album_builder.add_photo(media=photo_id)
+        await bot.send_media_group(chat_id=config.GROUP_ID, media=album_builder.build())
 
 @router.callback_query(F.data.startswith("reject_listing_"), F.message.chat.type == "private")
 async def reject_listing(callback: CallbackQuery, state: FSMContext):

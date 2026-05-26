@@ -259,18 +259,17 @@ async def reject_moderator_request(callback: CallbackQuery):
 
 @router.message(Command("register_group"), F.chat.type != "private")
 async def handle_register_group(message: Message):
-    global GROUP_ID
     if message.chat.type == "private":
         await message.answer("Эта команда выполняется в группе, которую нужно зарегистрировать как целевой чат для публикаций.")
         return
     if message.from_user.id != config.SUPER_ADMIN_ID:
          await message.answer("У вас нет прав на эту команду.")
          return
-    if GROUP_ID == message.chat.id:
+    if config.GROUP_ID == message.chat.id:
         await message.answer("Эта группа уже зарегистрирована.")
         return        
-    GROUP_ID = message.chat.id
+    config.GROUP_ID = message.chat.id
     data = load_config()
-    data["group_id"] = GROUP_ID
+    data["group_id"] = config.GROUP_ID
     save_config(data)
     await message.answer("✅ Группа зарегистрирована. Объявления будут публиковаться сюда.")

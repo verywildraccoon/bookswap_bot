@@ -31,17 +31,26 @@ TYPE_LABELS = {
     "type_search": "ИЩУ КНИГУ",
 }
 
+TYPE_HASHTAGS = {
+    "type_sale": "#продажа",
+    "type_swap": "#обмен",
+    "type_gift": "#даром",
+    "type_search": "#ищу",
+}
+
 async def form_listing_card(state: FSMContext):
     caption = []
     user_data = await state.get_data()
     listing_type = user_data.get('listing_type')
+    label = TYPE_LABELS.get(listing_type, "ОБЪЯВЛЕНИЕ")
+    hashtag = TYPE_HASHTAGS.get(listing_type, "#объявление")
     price = user_data.get('price')
     district = user_data.get('district')
     contact = user_data.get('contact')
     comment = user_data.get('comment')
     photos = user_data.get('photo_ids')
     
-    caption.append(f"{listing_type}\n")
+    caption.append(f"{label}\n")
     if price is not None:
         caption.append(f"Цена: {price}")
     if district is not None:
@@ -49,6 +58,7 @@ async def form_listing_card(state: FSMContext):
     caption.append(f"Контакт: {contact}")
     if comment is not None:
         caption.append(f"Комментарий: {comment}")
+    caption.append(f"\n{hashtag}")
 
     caption = ("\n".join(caption))
     
@@ -66,22 +76,15 @@ async def send_listing_to_user(message: Message, state: FSMContext):
             album_builder.add_photo(media=photo_id)
         await message.answer_media_group(media=album_builder.build())
 
-async def send_listing_to_group(callback: CallbackQuery, state: FSMContext):
+async def send_listing_to_group(state: FSMContext):
     caption, photos = await form_listing_card(state)
-    username = callback.from_user.username
-    full_name = callback.from_user.full_name
-
-    if username is not None: 
-        group_caption = caption + "\n\n" + "Автор объявления: @" + username
-    else:
-        group_caption = caption + "\n\n" + "Автор объявления: " + full_name
 
     if photos is None:
-        await bot.send_message(chat_id=config.GROUP_ID, text=group_caption)
+        await bot.send_message(chat_id=config.GROUP_ID, text=caption)
     elif len(photos) == 1:
-        await bot.send_photo(chat_id=config.GROUP_ID, photo=photos[0], caption=group_caption)
+        await bot.send_photo(chat_id=config.GROUP_ID, photo=photos[0], caption=caption)
     else:
-        album_builder = MediaGroupBuilder(caption=group_caption)
+        album_builder = MediaGroupBuilder(caption=caption)
         for photo_id in photos:
             album_builder.add_photo(media=photo_id)
         await bot.send_media_group(chat_id=config.GROUP_ID, media=album_builder.build())
@@ -185,10 +188,11 @@ async def handle_cancel(message: Message, state: FSMContext):
 async def got_listing_type(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.delete()
-    label = TYPE_LABELS[callback.data]
-    await state.update_data(listing_type=label)
+    listing_type = callback.data
+    label = TYPE_LABELS[listing_type]
+    await state.update_data(listing_type=listing_type)
     await state.set_state(Listing.waiting_photo)
-    if label == TYPE_LABELS["type_search"]:
+    if listing_type == "type_search":
         await callback.message.answer(
             f"Вы выбрали тип объявления: {label}.\n\n"
             "Если у вас есть обложка искомой книги - пришлите фото. Можно несколько - отправляйте по очереди или одним альбомом. \n\n"
@@ -210,11 +214,11 @@ async def got_listing_type_hint(message: Message, state: FSMContext):
 async def skip_photo(message: Message, state: FSMContext):
     user_data = await state.get_data()
     listing_type = user_data.get('listing_type')
-    if listing_type == TYPE_LABELS["type_search"]:
+    if listing_type == "type_search":
         await message.answer("Хорошо, пропускаем фото. \n\n" 
                              "В каком районе удобно встретиться? Можете написать /skip, чтобы пропустить.")
         await state.set_state(Listing.waiting_district)
-    elif listing_type in (TYPE_LABELS["type_sale"], TYPE_LABELS["type_swap"], TYPE_LABELS["type_gift"]):
+    elif listing_type in ("type_sale", "type_swap", "type_gift"):
         await message.answer("Фото обязательно для этого типа объявления. Пожалуйста, пришлите фото книги.")
 
 #Этап получения фото
@@ -236,21 +240,21 @@ async def next_after_photo(message: Message, state: FSMContext):
     listing_type = user_data.get('listing_type')
     photo_ids = user_data.get('photo_ids', [])
 
-    if not photo_ids and listing_type != TYPE_LABELS["type_search"]:
+    if not photo_ids and listing_type != "type_search":
         await message.answer("Вы не прислали ни одного фото. Пожалуйста, пришлите фото книги.")
         return
     
     await message.answer(f"Принято фото: {len(photo_ids)}.")
 
-    if listing_type == TYPE_LABELS["type_sale"]:
+    if listing_type == "type_sale":
         await state.set_state(Listing.waiting_price)
         await message.answer(
             "Укажите цену в тенге. Если книг несколько - можете указать диапазон цен (например, 500–1500) или минимальную цену."
         )
-    elif listing_type == TYPE_LABELS["type_search"]:
+    elif listing_type == "type_search":
         await state.set_state(Listing.waiting_district)
         await message.answer("В каком районе удобно встретиться? Можете написать /skip, чтобы пропустить.")
-    elif listing_type in (TYPE_LABELS["type_gift"], TYPE_LABELS["type_swap"]): 
+    elif listing_type in ("type_gift", "type_swap"): 
         await state.set_state(Listing.waiting_district)
         await message.answer("Из какого района можно забрать книгу?")
 
@@ -277,11 +281,11 @@ async def got_price(message: Message, state: FSMContext):
 async def skip_district(message: Message, state: FSMContext):
     user_data = await state.get_data()
     listing_type = user_data.get('listing_type')
-    if listing_type == TYPE_LABELS["type_search"]:
+    if listing_type == "type_search":
         await message.answer("Хорошо, район не указан.\n\n"
                             "Укажите номер телефона или ваш телеграм @username для связи.")
         await state.set_state(Listing.waiting_contact)
-    elif listing_type in (TYPE_LABELS["type_sale"], TYPE_LABELS["type_swap"], TYPE_LABELS["type_gift"]):
+    elif listing_type in ("type_sale", "type_swap", "type_gift"):
         await message.answer("Район нужен — без него непонятно, откуда забрать книгу. Пожалуйста, укажите.")
 
 #Этап предоставления района
@@ -306,7 +310,7 @@ async def got_contact(message: Message, state: FSMContext):
     user_data = await state.get_data()
     listing_type = user_data.get('listing_type')
 
-    if listing_type == TYPE_LABELS["type_search"]:
+    if listing_type == "type_search":
         await message.answer("Контакт записан. \n\n"
                              "Опишите книгу, которую ищете: автор, название, тематика. Это обязательное поле для объявлений типа «Ищу».")
     else: 
@@ -319,7 +323,7 @@ async def skip_comment(message: Message, state: FSMContext):
     user_data = await state.get_data()
     listing_type = user_data.get('listing_type')
 
-    if listing_type == TYPE_LABELS["type_search"]:
+    if listing_type == "type_search":
         await message.answer("Описание книги обязательно для типа «Ищу». Пожалуйста, опишите.")
     else:
         await send_listing_to_user(message, state)
@@ -356,7 +360,7 @@ async def confirm_listing(callback: CallbackQuery, state: FSMContext):
             "Чтобы создать ещё одно - /new." 
             )
     elif config.GROUP_ID is not None:
-        await send_listing_to_group(callback, state)
+        await send_listing_to_group(state)
         await callback.message.answer(
             "✅ Объявление опубликовано в группе!\n\n"
             "Чтобы создать ещё одно - /new." 
@@ -378,25 +382,19 @@ async def approve_listing(callback: CallbackQuery):
         return
     
     user_id = listing["author"]["user_id"]
-    username = listing["author"]["username"]
     full_name = listing["author"]["full_name"]
     caption = listing["caption"]
     photos = listing["photos"]
-        
-    if username is not None: 
-         group_caption = caption + "\n\n" + "Автор объявления: @" + username
-    else:
-        group_caption = caption + "\n\n" + "Автор объявления: " + full_name
 
     await bot.send_message(chat_id=user_id, text=f"✅ Ваше объявление одобрено и опубликовано в группе.")
     await callback.message.answer(f"✅ Объявление от {full_name} опубликовано.")
 
     if photos is None:
-        await bot.send_message(chat_id=config.GROUP_ID, text=group_caption)
+        await bot.send_message(chat_id=config.GROUP_ID, text=caption)
     elif len(photos) == 1:
-        await bot.send_photo(chat_id=config.GROUP_ID, photo=photos[0], caption=group_caption)
+        await bot.send_photo(chat_id=config.GROUP_ID, photo=photos[0], caption=caption)
     else:
-        album_builder = MediaGroupBuilder(caption=group_caption)
+        album_builder = MediaGroupBuilder(caption=caption)
         for photo_id in photos:
             album_builder.add_photo(media=photo_id)
         await bot.send_media_group(chat_id=config.GROUP_ID, media=album_builder.build())

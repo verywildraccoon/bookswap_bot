@@ -42,15 +42,15 @@ async def form_listing_card(state: FSMContext):
     caption = []
     user_data = await state.get_data()
     listing_type = user_data.get('listing_type')
-    label = TYPE_LABELS.get(listing_type, "ОБЪЯВЛЕНИЕ")
-    hashtag = TYPE_HASHTAGS.get(listing_type, "#объявление")
+    hashtag_lower = TYPE_HASHTAGS.get(listing_type, "#объявление")
+    hashtag_upper = hashtag_lower.upper()
     price = user_data.get('price')
     district = user_data.get('district')
     contact = user_data.get('contact')
     comment = user_data.get('comment')
     photos = user_data.get('photo_ids')
     
-    caption.append(f"{label}\n")
+    caption.append(f"{hashtag_upper}\n")
     if price is not None:
         caption.append(f"Цена: {price}")
     if district is not None:
@@ -58,7 +58,6 @@ async def form_listing_card(state: FSMContext):
     caption.append(f"Контакт: {contact}")
     if comment is not None:
         caption.append(f"Комментарий: {comment}")
-    caption.append(f"\n{hashtag}")
 
     caption = ("\n".join(caption))
     

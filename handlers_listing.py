@@ -94,13 +94,15 @@ async def send_listing_to_moderator(callback: CallbackQuery, state: FSMContext):
     full_name = callback.from_user.full_name
     user_id = callback.from_user.id
     unique_id = uuid.uuid4().hex[:8]
+    moderator_messages = {}
     
     keyboard = keyboards.get_listing_moderation_keyboard(unique_id)
 
     config.pending_listings[unique_id] = {
         "author": {"user_id": user_id, "username" : username, "full_name":full_name},
         "caption" : caption,
-        "photos" : photos
+        "photos" : photos,
+        "moderator_messages": moderator_messages
         }
 
     if username is not None: 
@@ -110,15 +112,28 @@ async def send_listing_to_moderator(callback: CallbackQuery, state: FSMContext):
     
     for moderator_id in config.MODERATORS:
         if photos is None:
-            await bot.send_message(chat_id=moderator_id, text=mod_caption, reply_markup=keyboard)
+            sent_message = await bot.send_message(chat_id=moderator_id, text=mod_caption, reply_markup=keyboard)
+            message_id = sent_message.message_id
+            config.pending_listings[unique_id]["moderator_messages"][moderator_id] = [message_id]
+
         elif len(photos) == 1:
-            await bot.send_photo(chat_id=moderator_id, photo=photos[0], caption=mod_caption, reply_markup=keyboard)
+            sent_message = await bot.send_photo(chat_id=moderator_id, photo=photos[0], caption=mod_caption, reply_markup=keyboard)
+            message_id = sent_message.message_id
+            config.pending_listings[unique_id]["moderator_messages"][moderator_id] = [message_id]
+        
         else:
             album_builder = MediaGroupBuilder(caption=mod_caption)
             for photo_id in photos:
                 album_builder.add_photo(media=photo_id)
-            await bot.send_media_group(chat_id=moderator_id, media=album_builder.build())
-            await bot.send_message(chat_id=moderator_id, text="Примите решение по объявлению", reply_markup=keyboard)
+            
+            sent_messages  = await bot.send_media_group(chat_id=moderator_id, media=album_builder.build())
+            message_ids = [msg.message_id for msg in sent_messages]
+            
+            sent_message = await bot.send_message(chat_id=moderator_id, text="Примите решение по объявлению", reply_markup=keyboard)
+            message_id = sent_message.message_id
+
+            message_ids.append(message_id)
+            config.pending_listings[unique_id]["moderator_messages"][moderator_id] = message_ids
 
 async def ask_publish_confirmation(message: Message, state: FSMContext):
     await state.set_state(Listing.waiting_confirmation)
@@ -260,7 +275,7 @@ async def next_after_photo(message: Message, state: FSMContext):
 #Не прислали фото, ошибка
 @router.message(Listing.waiting_photo, F.chat.type == "private")
 async def not_a_photo(message: Message, state: FSMContext):
-    await message.answer("Это не похоже на фото. Пожалуйста, пришлите изображение книги. Если хотите выйти - /cancel.")
+    await message.answer("Это не похоже на фото. Пожалуйста, пришлите изображение книги. Если хотите добавить ещё фото - отправляйте, или /next, чтобы продолжить. Если хотите выйти - /cancel.")
 
 #Пропуск этапа обозначения цены
 @router.message(Listing.waiting_price, Command("skip"), F.chat.type == "private")
@@ -371,11 +386,10 @@ async def confirm_listing(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("approve_listing_"), F.message.chat.type == "private")
 async def approve_listing(callback: CallbackQuery):
     await callback.answer()
-    await callback.message.delete()
 
     listing_id = callback.data.split("approve_listing_")[1]
     listing = config.pending_listings.pop(listing_id, None)
-    
+
     if listing is None:
         await callback.message.answer("Объявление не найдено. Возможно, бот перезапускался.")
         return
@@ -384,9 +398,17 @@ async def approve_listing(callback: CallbackQuery):
     full_name = listing["author"]["full_name"]
     caption = listing["caption"]
     photos = listing["photos"]
+    moderator_messages = listing["moderator_messages"]
 
     await bot.send_message(chat_id=user_id, text=f"✅ Ваше объявление одобрено и опубликовано в группе.")
     await callback.message.answer(f"✅ Объявление от {full_name} опубликовано.")
+
+    for moderator_id, info in moderator_messages.items():
+        for message_id in info:
+            try:
+                await bot.delete_message(chat_id=moderator_id, message_id=message_id)
+            except Exception as e:
+                print(f"Ошибка при удалении сообщения {message_id} для модератора {moderator_id}: {e}")
 
     if photos is None:
         await bot.send_message(chat_id=config.GROUP_ID, text=caption)
@@ -401,7 +423,6 @@ async def approve_listing(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("reject_listing_"), F.message.chat.type == "private")
 async def reject_listing(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    await callback.message.delete()
 
     listing_id = callback.data.split("reject_listing_")[1]
 
@@ -418,17 +439,26 @@ async def skip_rejection_reason(message: Message, state: FSMContext):
     user_data = await state.get_data()
     listing_id = user_data.get('listing_id')
     listing = config.pending_listings.pop(listing_id, None)
-
+    
     if listing is None:
         await message.answer("Объявление не найдено. Возможно, бот перезапускался.")
         return
     
     user_id = listing["author"]["user_id"]
     full_name = listing["author"]["full_name"]
+    moderator_messages = listing["moderator_messages"]
     text = "❌ Ваше объявление отклонено модератором."
-
+    
     await bot.send_message(chat_id=user_id, text=text)
     await message.answer(f"❌ Объявление от {full_name} отклонено.")
+
+    for moderator_id, info in moderator_messages.items():
+        for message_id in info:
+            try:
+                await bot.delete_message(chat_id=moderator_id, message_id=message_id)
+            except Exception as e:
+                print(f"Ошибка при удалении сообщения {message_id} для модератора {moderator_id}: {e}")
+
     await state.clear()
 
 @router.message(Moderation.waiting_reason, F.chat.type == "private")
@@ -443,6 +473,7 @@ async def got_rejection_reason(message: Message, state: FSMContext):
 
     user_id = listing["author"]["user_id"]
     full_name = listing["author"]["full_name"]
+    moderator_messages = listing["moderator_messages"]
     rejection_reason = message.text
     text=(
     "❌ Ваше объявление отклонено модератором.\n\n"
@@ -451,4 +482,12 @@ async def got_rejection_reason(message: Message, state: FSMContext):
     
     await bot.send_message(chat_id=user_id, text=text)
     await message.answer(f"❌ Объявление от {full_name} отклонено.")
+
+    for moderator_id, info in moderator_messages.items():
+        for message_id in info:
+            try:
+                await bot.delete_message(chat_id=moderator_id, message_id=message_id)
+            except Exception as e:
+                print(f"Ошибка при удалении сообщения {message_id} для модератора {moderator_id}: {e}")
+
     await state.clear()

@@ -1,3 +1,6 @@
+from email import message
+from pydoc import text
+
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
@@ -7,7 +10,7 @@ from aiogram.utils.media_group import MediaGroupBuilder
 import keyboards
 import uuid
 
-from config import bot
+from config import bot, load_listings, save_listings
 import config
 
 router = Router()
@@ -66,27 +69,38 @@ async def form_listing_card(state: FSMContext):
 async def send_listing_to_user(message: Message, state: FSMContext):
     caption, photos = await form_listing_card(state)
     if photos is None:
-        await message.answer(caption)
+        sent_message = await message.answer(caption)
+        message_id = sent_message.message_id
+        return [message_id]
     elif len(photos) == 1:
-        await message.answer_photo(photo=photos[0], caption = caption)
+        sent_message = await message.answer_photo(photo=photos[0], caption = caption)
+        message_id = sent_message.message_id
+        return [message_id]
     else:
         album_builder = MediaGroupBuilder(caption=caption)
         for photo_id in photos:
             album_builder.add_photo(media=photo_id)
-        await message.answer_media_group(media=album_builder.build())
+        sent_messages = await message.answer_media_group(media=album_builder.build())
+        message_ids = [msg.message_id for msg in sent_messages]
+        return message_ids
 
-async def send_listing_to_group(state: FSMContext):
-    caption, photos = await form_listing_card(state)
-
+async def publish_to_group(caption, photos):
+    
     if photos is None:
-        await bot.send_message(chat_id=config.GROUP_ID, text=caption)
+        sent_message = await bot.send_message(chat_id=config.GROUP_ID, text=caption)
+        message_id = sent_message.message_id
+        return [message_id]
     elif len(photos) == 1:
-        await bot.send_photo(chat_id=config.GROUP_ID, photo=photos[0], caption=caption)
+        sent_message = await bot.send_photo(chat_id=config.GROUP_ID, photo=photos[0], caption=caption)
+        message_id = sent_message.message_id
+        return [message_id]
     else:
         album_builder = MediaGroupBuilder(caption=caption)
         for photo_id in photos:
             album_builder.add_photo(media=photo_id)
-        await bot.send_media_group(chat_id=config.GROUP_ID, media=album_builder.build())
+        sent_messages = await bot.send_media_group(chat_id=config.GROUP_ID, media=album_builder.build())
+        message_ids = [msg.message_id for msg in sent_messages]
+        return message_ids
 
 async def send_listing_to_moderator(callback: CallbackQuery, state: FSMContext):
     caption, photos = await form_listing_card(state)
@@ -139,6 +153,35 @@ async def ask_publish_confirmation(message: Message, state: FSMContext):
     await state.set_state(Listing.waiting_confirmation)
     keyboard = keyboards.get_listing_confirmation_keyboard()
     await message.answer("Опубликовать объявление?", reply_markup=keyboard)
+
+async def notify_author_with_delete_button(photos, caption, message_ids, user_id):
+    
+    unique_id = uuid.uuid4().hex[:8]
+
+    if photos is None:
+        await bot.send_message(chat_id=user_id, text=caption)
+    elif len(photos) == 1:
+        await bot.send_photo(chat_id=user_id, photo=photos[0], caption=caption)
+    else:
+        album_builder = MediaGroupBuilder(caption=caption)
+        for photo_id in photos:
+            album_builder.add_photo(media=photo_id)
+        sent_messages = await bot.send_media_group(chat_id=user_id, media=album_builder.build())
+        message_ids = [msg.message_id for msg in sent_messages]
+
+    text = "✅ Объявление опубликовано! Если захотите удалить его из группы - нажмите кнопку ниже."
+    keyboard = keyboards.get_delete_listing_keyboard(unique_id)
+    sent_message = await bot.send_message(chat_id=user_id, text=text, reply_markup=keyboard)
+
+    current_msg_id = sent_message.message_id
+
+    data = load_listings()
+    data[unique_id] = {
+        "user_id": user_id,
+        "message_ids": message_ids,
+        "button_message_id": current_msg_id
+        }
+    save_listings(data)
 
 @router.message(CommandStart())
 async def handle_start(message: Message):
@@ -255,7 +298,7 @@ async def next_after_photo(message: Message, state: FSMContext):
     photo_ids = user_data.get('photo_ids', [])
 
     if not photo_ids and listing_type != "type_search":
-        await message.answer("Вы не прислали ни одного фото. Пожалуйста, пришлите фото книги.")
+        await message.answer("Вы не прислали ни одного фото. Пожалуйста, отправьте фото книги. Убедитесь, что отправляете как фото, а не как файл.")
         return
     
     await message.answer(f"Принято фото: {len(photo_ids)}.")
@@ -340,14 +383,16 @@ async def skip_comment(message: Message, state: FSMContext):
     if listing_type == "type_search":
         await message.answer("Описание книги обязательно для типа «Ищу». Пожалуйста, опишите.")
     else:
-        await send_listing_to_user(message, state)
+        message_ids = await send_listing_to_user(message, state)
+        await state.update_data(message_ids=message_ids)
         await ask_publish_confirmation(message, state)
 
 #Этап предоставления комментариев + формируем объявление
 @router.message(Listing.waiting_comment, F.chat.type == "private")
 async def got_comment(message: Message, state: FSMContext):
     await state.update_data(comment=message.text)
-    await send_listing_to_user(message, state)
+    message_ids = await send_listing_to_user(message, state)
+    await state.update_data(message_ids=message_ids)
     await ask_publish_confirmation(message, state)
 
 #Этап просмотра объявления + отмена
@@ -367,6 +412,18 @@ async def confirm_listing(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.delete()
     
+    caption, photos = await form_listing_card(state)
+
+    user_data = await state.get_data()
+    message_ids = user_data.get('message_ids')
+    user_id = callback.from_user.id
+
+    for message_id in message_ids:
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=message_id)
+        except Exception as e:
+            print(f"Ошибка при удалении сообщения {message_id} для пользователя {user_id}: {e}")
+
     if config.MODERATORS and config.MODERATION_ENABLED:
         await send_listing_to_moderator(callback, state)
         await callback.message.answer(
@@ -374,11 +431,10 @@ async def confirm_listing(callback: CallbackQuery, state: FSMContext):
             "Чтобы создать ещё одно - /new." 
             )
     elif config.GROUP_ID is not None:
-        await send_listing_to_group(state)
-        await callback.message.answer(
-            "✅ Объявление опубликовано в группе!\n\n"
-            "Чтобы создать ещё одно - /new." 
-            )
+        
+        message_ids = await publish_to_group(caption, photos)
+        await notify_author_with_delete_button(photos, caption, message_ids, user_id)
+
     else:
         await callback.message.answer("Бот не настроен на публикацию. Свяжитесь с админом.")
     await state.clear()
@@ -400,7 +456,10 @@ async def approve_listing(callback: CallbackQuery):
     photos = listing["photos"]
     moderator_messages = listing["moderator_messages"]
 
-    await bot.send_message(chat_id=user_id, text=f"✅ Ваше объявление одобрено и опубликовано в группе.")
+    message_ids = await publish_to_group(caption, photos)
+    
+    await notify_author_with_delete_button(photos, caption, message_ids, user_id)
+
     await callback.message.answer(f"✅ Объявление от {full_name} опубликовано.")
 
     for moderator_id, info in moderator_messages.items():
@@ -410,15 +469,64 @@ async def approve_listing(callback: CallbackQuery):
             except Exception as e:
                 print(f"Ошибка при удалении сообщения {message_id} для модератора {moderator_id}: {e}")
 
-    if photos is None:
-        await bot.send_message(chat_id=config.GROUP_ID, text=caption)
-    elif len(photos) == 1:
-        await bot.send_photo(chat_id=config.GROUP_ID, photo=photos[0], caption=caption)
-    else:
-        album_builder = MediaGroupBuilder(caption=caption)
-        for photo_id in photos:
-            album_builder.add_photo(media=photo_id)
-        await bot.send_media_group(chat_id=config.GROUP_ID, media=album_builder.build())
+@router.callback_query(F.data.startswith("delete_listing_"), F.message.chat.type == "private")
+async def handle_delete_listing(callback: CallbackQuery):
+    await callback.answer()
+
+    unique_id = callback.data.split("delete_listing_")[1]
+    data = load_listings()
+
+    if unique_id not in data:
+        await callback.message.answer("Объявление не найдено. Возможно, оно удалено.")
+        return
+
+    user_id = data[unique_id]["user_id"]
+    
+    text = "Вы действительно хотите удалить это объявление из группы?"
+    keyboard = keyboards.get_confirm_delete_keyboard(unique_id)
+    await bot.send_message(chat_id=user_id, text=text, reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("cancel_delete_"), F.message.chat.type == "private")
+async def cancel_delete_listing(callback: CallbackQuery):
+    await callback.answer()
+
+    data = load_listings()
+    user_id = callback.from_user.id
+    unique_id = callback.data.split("cancel_delete_")[1]
+
+    if unique_id not in data:
+        await callback.message.answer("Объявление не найдено. Возможно, оно удалено.")
+        return
+    
+    await callback.message.edit_text("Удаление отменено. Ваше объявление осталось в группе. Если захотите удалить его из группы - нажмите кнопку выше.")
+
+@router.callback_query(F.data.startswith("confirm_delete_"), F.message.chat.type == "private")
+async def confirm_delete_listing(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.delete()
+
+    unique_id = callback.data.split("confirm_delete_")[1]
+    data = load_listings()
+
+    request = data.pop(unique_id, None)
+    if request is None:
+        await callback.message.answer("Объявление не найдено. Возможно, оно удалено.")
+        return
+    
+    user_id = request["user_id"]
+    message_ids = request["message_ids"]
+    button_message_id = request["button_message_id"]
+
+    for message_id in message_ids:
+        try:
+            await bot.delete_message(chat_id=config.GROUP_ID, message_id=message_id)
+        except Exception as e:
+            print(f"Ошибка при удалении сообщения {message_id} для пользователя {user_id} в группе {config.GROUP_ID}: {e}")
+
+    save_listings(data)
+
+    await callback.message.answer("✅ Объявление удалено из группы.")
+    await bot.edit_message_text(chat_id=user_id, message_id=button_message_id, text="✅ Объявление удалено из группы.")
 
 @router.callback_query(F.data.startswith("reject_listing_"), F.message.chat.type == "private")
 async def reject_listing(callback: CallbackQuery, state: FSMContext):

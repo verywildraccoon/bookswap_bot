@@ -53,3 +53,23 @@ def get_listing_moderation_keyboard(listing_id):
         [button_approve, button_decline],
     ]
     )
+
+def get_delete_listing_keyboard(listing_id):
+    button_delete = InlineKeyboardButton(text="Удалить", callback_data=f"delete_listing_{listing_id}")
+
+    return InlineKeyboardMarkup(
+    inline_keyboard=[
+        [button_delete],
+    ]
+    )
+
+def get_confirm_delete_keyboard(listing_id):
+
+    confirm_delete_listing = InlineKeyboardButton(text="Да, удалить", callback_data=f"confirm_delete_{listing_id}")
+    cancel_delete_listing = InlineKeyboardButton(text="Отмена", callback_data=f"cancel_delete_{listing_id}")
+
+    return InlineKeyboardMarkup(
+    inline_keyboard=[
+        [confirm_delete_listing, cancel_delete_listing],
+    ]
+    )

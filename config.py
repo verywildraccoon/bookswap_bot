@@ -32,6 +32,20 @@ def save_config(data):
     with open('config.json', 'w', encoding="utf-8") as file:
         json.dump(data, file, ensure_ascii=False, indent=4)
 
+def load_listings():
+    try:
+        with open('listings.json', 'r', encoding="utf-8") as file:
+            data = json.load(file)
+            return data
+    except json.JSONDecodeError:
+        return {}
+    except FileNotFoundError:
+        return {}
+
+def save_listings(data):
+    with open('listings.json', 'w', encoding="utf-8") as file:
+        json.dump(data, file, ensure_ascii=False, indent=4)
+
 def try_parse_int(argument):
     if argument is None:
         return None

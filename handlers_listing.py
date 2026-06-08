@@ -97,14 +97,14 @@ async def publish_to_group(caption, photos, username, full_name):
         return [message_id]
     elif len(photos) == 1:
         sent_message = await bot.send_photo(chat_id=config.GROUP_ID, photo=photos[0], caption=caption)
-        message_id = sent_message.message_id
+        message_id = sent_message.message_id        
         return [message_id]
     else:
         album_builder = MediaGroupBuilder(caption=caption)
         for photo_id in photos:
             album_builder.add_photo(media=photo_id)
         sent_messages = await bot.send_media_group(chat_id=config.GROUP_ID, media=album_builder.build())
-        message_ids = [msg.message_id for msg in sent_messages]
+        message_ids = [msg.message_id for msg in sent_messages]        
         return message_ids
 
 async def send_listing_to_moderator(callback: CallbackQuery, state: FSMContext):
@@ -171,8 +171,7 @@ async def notify_author_with_delete_button(photos, caption, message_ids, user_id
         album_builder = MediaGroupBuilder(caption=caption)
         for photo_id in photos:
             album_builder.add_photo(media=photo_id)
-        sent_messages = await bot.send_media_group(chat_id=user_id, media=album_builder.build())
-        message_ids = [msg.message_id for msg in sent_messages]
+        await bot.send_media_group(chat_id=user_id, media=album_builder.build())
 
     text = "✅ Объявление опубликовано! Если захотите удалить его из группы - нажмите кнопку ниже."
     keyboard = keyboards.get_delete_listing_keyboard(unique_id)

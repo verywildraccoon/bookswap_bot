@@ -84,8 +84,13 @@ async def send_listing_to_user(message: Message, state: FSMContext):
         message_ids = [msg.message_id for msg in sent_messages]
         return message_ids
 
-async def publish_to_group(caption, photos):
+async def publish_to_group(caption, photos, username, full_name):
     
+    if username is not None: 
+        caption = caption + "\n\n" + "Автор объявления: @" + username
+    else:
+        caption = caption + "\n\n" + "Автор объявления: " + full_name
+
     if photos is None:
         sent_message = await bot.send_message(chat_id=config.GROUP_ID, text=caption)
         message_id = sent_message.message_id
@@ -414,6 +419,9 @@ async def confirm_listing(callback: CallbackQuery, state: FSMContext):
     
     caption, photos = await form_listing_card(state)
 
+    username = callback.from_user.username
+    full_name = callback.from_user.full_name
+
     user_data = await state.get_data()
     message_ids = user_data.get('message_ids')
     user_id = callback.from_user.id
@@ -432,7 +440,7 @@ async def confirm_listing(callback: CallbackQuery, state: FSMContext):
             )
     elif config.GROUP_ID is not None:
         
-        message_ids = await publish_to_group(caption, photos)
+        message_ids = await publish_to_group(caption, photos, username, full_name)
         await notify_author_with_delete_button(photos, caption, message_ids, user_id)
 
     else:
@@ -452,11 +460,12 @@ async def approve_listing(callback: CallbackQuery):
     
     user_id = listing["author"]["user_id"]
     full_name = listing["author"]["full_name"]
+    username = listing["author"]["username"]
     caption = listing["caption"]
     photos = listing["photos"]
     moderator_messages = listing["moderator_messages"]
 
-    message_ids = await publish_to_group(caption, photos)
+    message_ids = await publish_to_group(caption, photos, username, full_name)
     
     await notify_author_with_delete_button(photos, caption, message_ids, user_id)
 
